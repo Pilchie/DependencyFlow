@@ -84,7 +84,7 @@ namespace DependencyFlow.Pages
         }
 
         public string GetBuildUrl(Build? build)
-            => build == null 
+            => build == null
                 ? "(unknown)"
                 : $"https://dev.azure.com/{build.AzureDevOpsAccount}/{build.AzureDevOpsProject}/_build/results?buildId={build.AzureDevOpsBuildId}&view=results";
 
@@ -128,9 +128,9 @@ namespace DependencyFlow.Pages
             }
         }
 
-        private async Task<(int?, DateTimeOffset?)> GetCommitInfo(GitHubInfo? gitHubInfo, Build build)
+        private async Task<(int?, DateTimeOffset)> GetCommitInfo(GitHubInfo? gitHubInfo, Build build)
         {
-            DateTimeOffset? commitAge = build.DateProduced;
+            DateTimeOffset commitAge = build.DateProduced;
             int? commitDistance = null;
             if (gitHubInfo != null)
             {
@@ -159,9 +159,10 @@ namespace DependencyFlow.Pages
 
                         if (foundCommit == false)
                         {
-                            // something went wrong
-                            _logger.LogWarning("Failed to follow commit parents and find correct commit age.");
-                            commitAge = null;
+                            // Happens if there are over 250 commits
+                            // We would need to use a paging API to follow commit history over 250 commits
+                            _logger.LogDebug("Failed to follow commit parents and find correct commit age. Falling back to the date the build was produced");
+                            commitAge = build.DateProduced;
                             return (commitDistance, commitAge);
                         }
                     }
@@ -180,9 +181,9 @@ namespace DependencyFlow.Pages
         public int? CommitDistance { get; }
         public string CommitUrl { get; }
         public string BuildUrl { get; }
-        public DateTimeOffset? CommitAge { get; }
+        public DateTimeOffset CommitAge { get; }
 
-        public IncomingRepo(Build build, string shortName, int? commitDistance, string commitUrl, string buildUrl, DateTimeOffset? commitAge)
+        public IncomingRepo(Build build, string shortName, int? commitDistance, string commitUrl, string buildUrl, DateTimeOffset commitAge)
         {
             Build = build;
             ShortName = shortName;
