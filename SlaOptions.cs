@@ -11,7 +11,7 @@ namespace DependencyFlow
         public IDictionary<string, Sla> Repositories { get; } =
             new Dictionary<string, Sla>
             {
-                { "[Default]", new Sla { FailUnconsumedCommitAge = 7, WarningUnconsumedCommitAge = 5 } },
+                { "[Default]", new Sla { FailUnconsumedBuildAge = 7, WarningUnconsumedBuildAge = 5 } },
             };
 
         public Sla GetForRepo(string repoShortName)
@@ -28,10 +28,10 @@ namespace DependencyFlow
     [DebuggerDisplay("{GetDebuggerDisplay(),nq}")]
     public class Sla
     {
-        public int WarningUnconsumedCommitAge { get; set; }
-        public int FailUnconsumedCommitAge { get; set; }
+        public int WarningUnconsumedBuildAge { get; set; }
+        public int FailUnconsumedBuildAge { get; set; }
 
         private string GetDebuggerDisplay()
-             => $"{nameof(Sla)}(Warn: {WarningUnconsumedCommitAge}, Fail: {FailUnconsumedCommitAge})";
+             => $"{nameof(Sla)}(Warn: {WarningUnconsumedBuildAge}, Fail: {FailUnconsumedBuildAge})";
     }
 }

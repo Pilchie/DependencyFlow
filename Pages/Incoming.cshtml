@@ -19,12 +19,17 @@
         string? linkClass = "link-light";
         string statusIcon = "✔️";
 
-        var elapsed = DateTime.UtcNow - incoming.CommitAge.UtcDateTime;
-        if (incoming.CommitDistance == 0 || elapsed.TotalDays < Model.SlaOptions.GetForRepo(incoming.ShortName).WarningUnconsumedCommitAge)
+        var elapsed = TimeSpan.Zero;
+        if (incoming.OldestPublishedButUnconsumedBuild != null)
+        {
+            elapsed = DateTime.UtcNow - incoming.OldestPublishedButUnconsumedBuild.DateProduced;
+        }
+
+        if (incoming.OldestPublishedButUnconsumedBuild == null || elapsed.TotalDays < Model.SlaOptions.GetForRepo(incoming.ShortName).WarningUnconsumedBuildAge)
         {
             conditionClass = "bg-primary";
         }
-        else if (elapsed.TotalDays < Model.SlaOptions.GetForRepo(incoming.ShortName).FailUnconsumedCommitAge)
+        else if (elapsed.TotalDays < Model.SlaOptions.GetForRepo(incoming.ShortName).FailUnconsumedBuildAge)
         {
             statusIcon = "⚠";
             conditionClass = "bg-warning";
@@ -44,11 +49,11 @@
                     @statusIcon We are @(incoming.CommitDistance == null ? "(unknown)" : incoming.CommitDistance == 0 ? "0" : $"{incoming.CommitDistance}") commit(s) behind
                 </h5>
                 <p class="card-text">
-                    Oldest unconsumed commit was @(incoming.CommitAge == null ? "(unknown)" : incoming.CommitAge.Humanize())
+                    Oldest unconsumed - build: @(incoming.OldestPublishedButUnconsumedBuild == null ? "none" : incoming.OldestPublishedButUnconsumedBuild.DateProduced.Humanize()) / commit: @(incoming.CommitAge == null ? "(unknown)" : incoming.CommitAge.Humanize())
                 </p>
             </div>
             <div class="card-footer">
-                <a class="@linkClass" target="_blank" href="@incoming.BuildUrl">Build @incoming.Build.AzureDevOpsBuildNumber</a> | <a class="@linkClass" target="_blank" href="@incoming.CommitUrl">@incoming.Build.Commit.Substring(0, 6)</a>
+                <a class="@linkClass" target="_blank" href="@incoming.BuildUrl">Build @incoming.LastConsumedBuild.AzureDevOpsBuildNumber</a> | <a class="@linkClass" target="_blank" href="@incoming.CommitUrl">@incoming.LastConsumedBuild.Commit.Substring(0, 6)</a>
             </div>
         </div>
 

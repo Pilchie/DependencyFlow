@@ -1,7 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Net;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Humanizer;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -35,36 +38,73 @@ namespace DependencyFlow.Pages
         public async Task OnGet(int channelId, string owner, string repo)
         {
             var repoUrl = $"https://github.com/{owner}/{repo}";
-            var latest = await _client.GetLatestAsync(repoUrl, null, null, channelId, null, null, false, ApiVersion10._20190116);
-            var graph = await _client.GetBuildGraphAsync(latest.Id, (ApiVersion9)ApiVersion40._20190116);
+            var latest = await _client.GetLatestAsync(repoUrl, null, null, channelId, null, null, false, ApiVersion10._20190116, CancellationToken.None);
+            var graph = await _client.GetBuildGraphAsync(latest.Id, (ApiVersion9)ApiVersion40._20190116, CancellationToken.None);
             Build = graph.Builds[latest.Id.ToString()];
 
             var incoming = new List<IncomingRepo>();
             foreach (var dep in Build.Dependencies)
             {
-                var build = graph.Builds[dep.BuildId.ToString()];
+                var lastConsumedBuildOfDependency = graph.Builds[dep.BuildId.ToString()];
 
-                var gitHubInfo = GetGitHubInfo(build);
+                var gitHubInfo = GetGitHubInfo(lastConsumedBuildOfDependency);
 
                 if (!IncludeRepo(gitHubInfo))
                 {
                     continue;
                 }
 
-                var (commitDistance, commitAge) = await GetCommitInfo(gitHubInfo, build);
+                var (commitDistance, commitAge) = await GetCommitInfo(gitHubInfo, lastConsumedBuildOfDependency);
+
+                var oldestPublishedButUnconsumedBuild = await GetOldestUnconsumedBuild(lastConsumedBuildOfDependency.Id);
 
                 incoming.Add(new IncomingRepo(
-                    build,
+                    lastConsumedBuildOfDependency,
                     shortName: gitHubInfo?.Repo ?? "",
+                    oldestPublishedButUnconsumedBuild,
+                    GetCommitUrl(lastConsumedBuildOfDependency),
+                    GetBuildUrl(lastConsumedBuildOfDependency),
                     commitDistance,
-                    GetCommitUrl(build),
-                    buildUrl: GetBuildUrl(build),
-                    commitAge
-                ));
+                    commitAge));
             }
             IncomingRepositories = incoming;
 
             CurrentRateLimit = _github.GetLastApiInfo().RateLimit;
+        }
+
+        private async Task<Build?> GetOldestUnconsumedBuild(int lastConsumedBuildOfDependencyId)
+        {
+            // Note: We fetch `build` again here so that it will have channel information, which it doesn't when coming from the graph :(
+            var build = await _client.GetBuildAsync(lastConsumedBuildOfDependencyId, ApiVersion8._20190116, CancellationToken.None);
+            var buildCollection = await _client.ListBuildsAsync(
+                build.GitHubRepository,
+                commit: null,
+                buildNumber: null,
+                channelId: build.Channels.FirstOrDefault(c => c.Classification == "product" || c.Classification == "tools")?.Id,
+                notBefore: build.DateProduced.Subtract(TimeSpan.FromSeconds(5)),
+                notAfter: null,
+                loadCollections: false,
+                page: null,
+                perPage: null,
+                api_version: ApiVersion6._20190116,
+                CancellationToken.None);
+            var publishedBuildsOfDependency = new List<Build>(buildCollection);
+
+            var last = publishedBuildsOfDependency.LastOrDefault();
+            if (last == null)
+            {
+                this._logger.LogWarning("Last build didn't match last consumed build, treating dependency '{Dependency}' as up to date", build.GitHubRepository);
+                return null;
+            }
+
+            if (last.AzureDevOpsBuildId != build.AzureDevOpsBuildId)
+            {
+                this._logger.LogWarning("Last build didn't match last consumed build");
+            }
+
+            return publishedBuildsOfDependency.Count > 1
+                ? publishedBuildsOfDependency[publishedBuildsOfDependency.Count - 2]
+                : null;
         }
 
         public GitHubInfo? GetGitHubInfo(Build? build)
@@ -138,13 +178,13 @@ namespace DependencyFlow.Pages
             }
         }
 
-        private async Task<(int?, DateTimeOffset)> GetCommitInfo(GitHubInfo? gitHubInfo, Build build)
+        private async Task<(int? commitDistance, DateTimeOffset? commitAge)> GetCommitInfo(GitHubInfo? gitHubInfo, Build lastConsumedBuild)
         {
-            DateTimeOffset commitAge = build.DateProduced;
+            DateTimeOffset? commitAge = null;
             int? commitDistance = null;
             if (gitHubInfo != null)
             {
-                var comparison = await GetCommitsBehindAsync(gitHubInfo, build);
+                var comparison = await GetCommitsBehindAsync(gitHubInfo, lastConsumedBuild);
 
                 // We're using the branch as the "head" so "ahead by" is actually how far the branch (i.e. "master") is
                 // ahead of the commit. So it's also how far **behind** the commit is from the branch head.
@@ -154,7 +194,7 @@ namespace DependencyFlow.Pages
                 {
                     // Follow the first parent starting at the last unconsumed commit until we find the commit directly after our current consumed commit
                     var nextCommit = comparison.Commits[comparison.Commits.Count - 1];
-                    while (nextCommit.Parents[0].Sha != build.Commit)
+                    while (nextCommit.Parents[0].Sha != lastConsumedBuild.Commit)
                     {
                         bool foundCommit = false;
                         foreach (var commit in comparison.Commits)
@@ -172,8 +212,7 @@ namespace DependencyFlow.Pages
                             // Happens if there are over 250 commits
                             // We would need to use a paging API to follow commit history over 250 commits
                             _logger.LogDebug("Failed to follow commit parents and find correct commit age. Falling back to the date the build was produced");
-                            commitAge = build.DateProduced;
-                            return (commitDistance, commitAge);
+                            return (commitDistance, null);
                         }
                     }
 
@@ -186,20 +225,22 @@ namespace DependencyFlow.Pages
 
     public class IncomingRepo
     {
-        public Build Build { get; }
+        public Build LastConsumedBuild { get; }
         public string ShortName { get; }
         public int? CommitDistance { get; }
+        public DateTimeOffset? CommitAge { get; }
         public string CommitUrl { get; }
         public string BuildUrl { get; }
-        public DateTimeOffset CommitAge { get; }
+        public Build? OldestPublishedButUnconsumedBuild { get; }
 
-        public IncomingRepo(Build build, string shortName, int? commitDistance, string commitUrl, string buildUrl, DateTimeOffset commitAge)
+        public IncomingRepo(Build lastConsumedBuild, string shortName, Build? oldestPublishedButUnconsumedBuild, string commitUrl, string buildUrl, int? commitDistance, DateTimeOffset? commitAge)
         {
-            Build = build;
+            LastConsumedBuild = lastConsumedBuild;
             ShortName = shortName;
-            CommitDistance = commitDistance;
+            OldestPublishedButUnconsumedBuild = oldestPublishedButUnconsumedBuild;
             CommitUrl = commitUrl;
             BuildUrl = buildUrl;
+            CommitDistance = commitDistance;
             CommitAge = commitAge;
         }
     }
