@@ -35,8 +35,13 @@ namespace DependencyFlow.Pages
 
         public Build? Build { get; private set; }
 
+        public string? ChannelName { get; private set; }
+
         public async Task OnGet(int channelId, string owner, string repo)
         {
+            var channel = await _client.GetChannelAsync(channelId, ApiVersion13._20190116);
+            ChannelName = channel.Name;
+
             var repoUrl = $"https://github.com/{owner}/{repo}";
             var latest = await _client.GetLatestAsync(repoUrl, null, null, channelId, null, null, false, ApiVersion10._20190116, CancellationToken.None);
             var graph = await _client.GetBuildGraphAsync(latest.Id, (ApiVersion9)ApiVersion40._20190116, CancellationToken.None);
