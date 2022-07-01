@@ -25,6 +25,7 @@ namespace DependencyFlow.Pages
         {
             Channels = (await _client.ListChannelsAsync(classification: null, ApiVersion11._20190116))
                 .Select(c => (c.Name, c.Id))
+                .OrderBy(x => x.Name)
                 .ToList();
         }
 
