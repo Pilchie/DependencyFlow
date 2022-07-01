@@ -38,7 +38,10 @@ namespace DependencyFlow.Pages
                 owner = match.Groups["owner"].Value;
                 repo = match.Groups["repo"].Value;
             }
-            return Redirect(Url.Page("Incoming", new { channelId, owner, repo }));
+            var page = Url.Page("Incoming", new { channelId, owner, repo });
+            return page is null
+                ? NotFound()
+                : Redirect(page);
         }
     }
 }
